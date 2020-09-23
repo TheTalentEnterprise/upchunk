@@ -5,6 +5,7 @@ const SUCCESSFUL_CHUNK_UPLOAD_CODES = [200, 201, 202, 204, 308];
 const TEMPORARY_ERROR_CODES = [408, 502, 503, 504]; // These error codes imply a chunk may be retried
 
 type EventName =
+  | 'data'
   | 'attempt'
   | 'attemptFailure'
   | 'error'
@@ -13,51 +14,50 @@ type EventName =
   | 'progress'
   | 'success';
 
-interface IOptions {
-  endpoint: string | ((file?: File) => Promise<string>);
-  file: File;
+export interface IOptions {
+  endpoint: string | (() => Promise<string>);
   headers?: XhrHeaders;
-  chunkSize?: number;
+  maxChunkSize?: number;
   attempts?: number;
   delayBeforeAttempt?: number;
 }
 
+const MIN_CHUNK_SIZE = 256 * 1024
+
 export class UpChunk {
   public endpoint: string | ((file?: File) => Promise<string>);
-  public file: File;
   public headers: XhrHeaders;
-  public chunkSize: number;
+  public maxChunkSize: number;
   public attempts: number;
   public delayBeforeAttempt: number;
 
   private chunk: Blob;
   private chunkCount: number;
-  private chunkByteSize: number;
+  private maxChunkByteSize: number;
   private endpointValue: string;
-  private totalChunks: number;
   private attemptCount: number;
   private offline: boolean;
   private paused: boolean;
 
-  private reader: FileReader;
   private eventTarget: EventTarget;
+
+  private blob: Blob
+  private allChunksReceived = false
+  private lastIndex = 0
 
   constructor(options: IOptions) {
     this.endpoint = options.endpoint;
-    this.file = options.file;
     this.headers = options.headers || ({} as XhrHeaders);
-    this.chunkSize = options.chunkSize || 5120;
+    this.maxChunkSize = options.maxChunkSize || 5120;
     this.attempts = options.attempts || 5;
     this.delayBeforeAttempt = options.delayBeforeAttempt || 1;
 
     this.chunkCount = 0;
-    this.chunkByteSize = this.chunkSize * 1024;
-    this.totalChunks = Math.ceil(this.file.size / this.chunkByteSize);
+    this.maxChunkByteSize = this.maxChunkSize * 1024;
     this.attemptCount = 0;
     this.offline = false;
     this.paused = false;
 
-    this.reader = new FileReader();
     this.eventTarget = new EventTarget();
 
     this.validateOptions();
@@ -81,6 +81,18 @@ export class UpChunk {
         this.dispatch('offline');
       });
     }
+  }
+
+  public addChunk(chunk: Blob) {
+    if (this.blob) {
+      this.blob = new Blob([this.blob, chunk])
+    } else {
+      this.blob = new Blob([chunk])
+    }
+  }
+
+  public finish() {
+    this.allChunksReceived = true
   }
 
   /**
@@ -123,17 +135,14 @@ export class UpChunk {
         'endpoint must be defined as a string or a function that returns a promise'
       );
     }
-    if (!(this.file instanceof File)) {
-      throw new TypeError('file must be a File object');
-    }
     if (this.headers && typeof this.headers !== 'object') {
       throw new TypeError('headers must be null or an object');
     }
     if (
-      this.chunkSize &&
-      (typeof this.chunkSize !== 'number' ||
-        this.chunkSize <= 0 ||
-        this.chunkSize % 256 !== 0)
+      this.maxChunkSize &&
+      (typeof this.maxChunkSize !== 'number' ||
+        this.maxChunkSize <= 0 ||
+        this.maxChunkSize % 256 !== 0)
     ) {
       throw new TypeError(
         'chunkSize must be a positive number in multiples of 256'
@@ -163,7 +172,7 @@ export class UpChunk {
       return Promise.resolve(this.endpoint);
     }
 
-    return this.endpoint(this.file).then((value) => {
+    return this.endpoint().then((value) => {
       this.endpointValue = value;
       return this.endpointValue;
     });
@@ -173,31 +182,33 @@ export class UpChunk {
    * Get portion of the file of x bytes corresponding to chunkSize
    */
   private getChunk() {
+    const nearestMultiple = (size: number) => MIN_CHUNK_SIZE * Math.floor(size / MIN_CHUNK_SIZE)
     return new Promise((resolve) => {
-      // Since we start with 0-chunkSize for the range, we need to subtract 1.
-      const length =
-        this.totalChunks === 1 ? this.file.size : this.chunkByteSize;
-      const start = length * this.chunkCount;
-
-      this.reader.onload = () => {
-        if (this.reader.result !== null) {
-          this.chunk = new Blob([this.reader.result], {
-            type: 'application/octet-stream',
-          });
+      const checkAndResolve = () => {
+        if (!this.blob) {
+          return setTimeout(checkAndResolve, 1000)
         }
-        resolve();
-      };
-
-      this.reader.readAsArrayBuffer(this.file.slice(start, start + length));
+        const remainingSize = this.blob.size - this.lastIndex
+        if (this.allChunksReceived && remainingSize < MIN_CHUNK_SIZE) {
+          this.chunk = this.blob.slice(this.lastIndex, this.lastIndex + remainingSize)
+          resolve()
+        } else if (remainingSize >= MIN_CHUNK_SIZE) {
+          const size = remainingSize >= this.maxChunkByteSize ? this.maxChunkByteSize : nearestMultiple(remainingSize)
+          this.chunk = this.blob.slice(this.lastIndex, this.lastIndex + size)
+          resolve()
+        } else {
+          setTimeout(checkAndResolve, 1000)
+        }
+      }
+      setTimeout(checkAndResolve, 1000)
     });
   }
 
   private xhrPromise(options: XhrUrlConfig): Promise<XhrResponse> {
     const beforeSend = (xhrObject: XMLHttpRequest) => {
       xhrObject.upload.onprogress = (event: ProgressEvent) => {
-        const successfulPercentage = (100 / this.totalChunks) * this.chunkCount;
-        const chunkPercentage = (event.loaded / this.file.size) * 100;
-        this.dispatch('progress', successfulPercentage + chunkPercentage);
+        const progress = ((this.lastIndex + event.loaded) / this.blob.size) * 100
+        this.dispatch('progress', progress);
       };
     };
 
@@ -216,17 +227,18 @@ export class UpChunk {
    * Send chunk of the file with appropriate headers and add post parameters if it's last chunk
    */
   private sendChunk() {
-    const rangeStart = this.chunkCount * this.chunkByteSize;
+    const rangeStart = this.lastIndex;
     const rangeEnd = rangeStart + this.chunk.size - 1;
+    const fileSize = this.allChunksReceived ? this.blob.size : '*'
     const headers = {
       ...this.headers,
-      'Content-Type': this.file.type,
-      'Content-Range': `bytes ${rangeStart}-${rangeEnd}/${this.file.size}`,
+      'Content-Type': 'application/octet-stream',
+      'Content-Range': `bytes ${rangeStart}-${rangeEnd}/${fileSize}`,
     };
 
     this.dispatch('attempt', {
       chunkNumber: this.chunkCount,
-      chunkSize: this.chunk.size,
+      chunkSize: this.chunk.size/1024,
     });
 
     return this.xhrPromise({
@@ -275,15 +287,14 @@ export class UpChunk {
       .then((res) => {
         if (SUCCESSFUL_CHUNK_UPLOAD_CODES.includes(res.statusCode)) {
           this.chunkCount = this.chunkCount + 1;
-          if (this.chunkCount < this.totalChunks) {
-            this.sendChunks();
-          } else {
+          this.lastIndex += this.chunk.size
+          if (this.allChunksReceived && this.lastIndex >= this.blob.size) {
             this.dispatch('success');
+          } else {
+            this.sendChunks();
           }
 
-          const percentProgress = Math.round(
-            (100 / this.totalChunks) * this.chunkCount
-          );
+          const percentProgress = Math.round(this.lastIndex / this.blob.size) * 100
 
           this.dispatch('progress', percentProgress);
         } else if (TEMPORARY_ERROR_CODES.includes(res.statusCode)) {

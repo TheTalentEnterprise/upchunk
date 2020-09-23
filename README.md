@@ -1,6 +1,6 @@
-![UpChunk](banner.png)
+# UpChunk <img src="https://travis-ci.org/thetalententerprise/upchunk.svg?branch=master" alt="Build Status">
 
-# UpChunk <img src="https://travis-ci.org/muxinc/upchunk.svg?branch=master" alt="Build Status">
+This is a modified version of `@mux/upchunk`. The modifications in this package enable a video recorder to begin uploading without waiting for the recording to finish. Although, it works fine with any normal file uploads too.
 
 UpChunk uploads chunks of files! It's a JavaScript module for handling large file uploads via chunking and making a `put` request for each chunk with the correct range request headers. Uploads can be paused and resumed, they're fault tolerant,
 and it should work just about anywhere.
@@ -17,19 +17,13 @@ UpChunk is designed to be used with [Mux](https://mux.com) direct uploads, but s
 ### NPM
 
 ```
-npm install --save @mux/upchunk
+npm install --save @thetalententerprise/upchunk
 ```
 
 ### Yarn
 
 ```
-yarn add @mux/upchunk
-```
-
-### Script Tags
-
-```
-<script src="https://unpkg.com/@mux/upchunk@2"></script>
+yarn add @thetalententerprise/upchunk
 ```
 
 ## Basic Usage
@@ -58,8 +52,80 @@ module.exports = async (req, res) => {
 
 ### Then, in the browser
 
+**VideoRecorder example**
+Using `videojs-record`
+
 ```javascript
-import * as UpChunk from '@mux/upchunk';
+
+  let lastIndex = 0
+  var player = videojs('myVideo', options);
+
+  player.on('deviceError', function() {
+      console.log('device error:', player.deviceErrorCode);
+  });
+
+  player.on('error', function(element, error) {
+      console.error(error);
+  });
+
+  player.on('startRecord', function() {
+    recording = true
+    console.log('started recording!');
+  });
+
+  player.on('timestamp', function() {
+    const totalLength = player.recordedData.length
+    const blob = new Blob(player.recordedData.slice(lastIndex, totalLength))
+    getUploader().addChunk(blob)
+    lastIndex = totalLength
+  })
+
+  player.on('finishRecord', function() {
+    getUploader().finish()
+    console.log('finished recording: ', player);
+  });
+
+  let upload;
+  const getUploader = () => {
+    if (upload) return upload
+    upload = UpChunk.createUpload({
+      endpoint: () => new Promise((resolve) => {
+        if (loc.value.length > 0) {
+          return resolve(loc.value)
+        }
+        loc.onchange = () => {
+          console.log('loc', loc.value)
+          resolve(loc.value)
+        }
+      }),
+      maxChunkSize: 51200,
+    });
+    upload.on('error', err => {
+      console.error('It all went wrong!', err.detail);
+    });
+
+    upload.on('progress', ({ detail: progress }) => {
+      console.log(`Progress: ${progress}%`);
+    });
+
+    upload.on('attempt', ({ detail }) => {
+      console.log('There was an attempt!', detail);
+    });
+
+    upload.on('success', () => {
+      console.timeEnd("upload");
+      console.log('We did it!');
+    });
+    return upload
+  }
+```
+
+
+**File Upload example**
+
+
+```javascript
+import * as UpChunk from '@thetalententerprise/upchunk';
 
 // Pretend you have an HTML page with an input like: <input id="picker" type="file" />
 const picker = document.getElementById('picker');
@@ -72,8 +138,7 @@ picker.onchange = () => {
 
   const upload = UpChunk.createUpload({
     endpoint: getUploadUrl,
-    file: picker.files[0],
-    chunkSize: 5120, // Uploads the file in ~5mb chunks
+    maxChunkSize: 5120, // Uploads the file in ~5mb chunks
   });
 
   // subscribe to events
@@ -88,6 +153,18 @@ picker.onchange = () => {
   upload.on('success', () => {
     console.log("Wrap it up, we're done here. 👋");
   });
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (reader.result !== null) {
+      const chunk = new Blob([reader.result], {
+        type: file.type,
+      });
+      upload.addChunk(chunk)
+      upload.finish()
+    }
+  };
+  reader.readAsArrayBuffer(file);
 };
 ```
 
@@ -103,15 +180,11 @@ Returns an instance of `UpChunk` and begins uploading the specified `File`.
 
   URL to upload the file to. This can be either a string of the authenticated URL to upload to, or a function that returns a promise that resolves that URL string. The function will be passed the `file` as a parameter.
 
-- `file` <small>type: [`File`](https://developer.mozilla.org/en-US/docs/Web/API/File) (required)</small>
-
-  The file you'd like to upload. For example, you might just want to use the file from an input with a type of "file".
-
 - `headers` <small>type: `Object`</small>
 
   An object with any headers you'd like included with the `PUT` request for each chunk.
 
-- `chunkSize` <small>type: `integer`, default:`5120`</small>
+- `maxChunkSize` <small>type: `integer`, default:`5120`</small>
 
   The size in kb of the chunks to split the file into, with the exception of the final chunk which may be smaller. This parameter should be in multiples of 256.
 
@@ -125,6 +198,14 @@ Returns an instance of `UpChunk` and begins uploading the specified `File`.
 
 ### UpChunk Instance Methods
 
+- `addChunk(chunk: Blob)`
+
+  Adds the chunk to the upload queue.
+
+- `finish()`
+
+  Call after adding all chunks.
+
 - `pause()`
 
   Pauses an upload after the current in-flight chunk is finished uploading.
@@ -137,9 +218,9 @@ Returns an instance of `UpChunk` and begins uploading the specified `File`.
 
 Events are fired with a [`CustomEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent/CustomEvent) object. The `detail` key is null if an interface isn't specified.
 
-- `attempt` <small>`{ detail: { chunkNumber: Integer, chunkSize: Integer } }`</small>
+- `attempt` <small>`{ detail: { chunkNumber: Integer, maxChunkSize: Integer } }`</small>
 
-  Fired immediately before a chunk upload is attempted. `chunkNumber` is the number of the current chunk being attempted, and `chunkSize` is the size (in bytes) of that chunk.
+  Fired immediately before a chunk upload is attempted. `chunkNumber` is the number of the current chunk being attempted, and `maxChunkSize` is the size (in bytes) of that chunk.
 
 - `attemptFailure` <small>`{ detail: { message: String, chunkNumber: Integer, attemptsLeft: Integer } }`</small>
 

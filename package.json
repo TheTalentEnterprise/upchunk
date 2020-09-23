@@ -1,10 +1,13 @@
 {
-  "name": "@mux/upchunk",
+  "name": "@thetalententerprise/upchunk",
   "version": "1.0.8",
-  "description": "Dead simple chunked file uploads using Fetch",
+  "description": "Upload a video to mux.com or Google Cloud Storage while recording is in progress.",
   "main": "dist/upchunk.js",
-  "repository": "https://github.com/muxinc/upchunk",
+  "repository": "https://github.com/thetalententerprise/upchunk",
   "author": "Matthew McClure <m@mux.com>",
+  "contributors": [
+    "Shuja Shabandri <shuja@shabandri.com>"
+  ],
   "license": "MIT",
   "keywords": [
     "browser upload",

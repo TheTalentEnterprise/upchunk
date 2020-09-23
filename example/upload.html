@@ -27,21 +27,15 @@
     <div class="container">
         <div class="row">
           <div class="column heading">
-            <p>Record Video | <a href="upload.html">File Upload</a></p>
+            <p><a href="index.html">Record Video</a> | File Upload</p>
           </div>
         </div>
         <div class="row">
           <div class="column heading">
-            <h1>Record Video</h1>
+            <h1>Upload Video</h1>
             <p>
-                Records the video and begins uploading while recording is in progress.<br>
-                Add a direct upload URL and begin recording.
+                This example shows uploading of video file in multiple chunks.
             </p>
-          </div>
-        </div>
-        <div class="row">
-          <div class="column video">
-            <video id="myVideo" playsinline class="video-js vjs-default-skin"></video>
           </div>
         </div>
         <div class="row">
@@ -49,6 +43,7 @@
                 <form>
                     <fieldset>
                         <input id="location" type="text" placeholder="Mux Upload URL" />
+                        <input id="picker" type="file" />
                     </fieldset>
                 </form>
             </div>

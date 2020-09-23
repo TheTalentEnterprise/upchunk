@@ -18,7 +18,7 @@ describe('option validation', () => {
     endpoint: '/foo',
     file: fakeFile(),
     headers: {},
-    chunkSize: 256,
+    maxChunkSize: 256,
     attempts: 1,
     delayBeforeAttempt: 1,
     ...options,
@@ -49,38 +49,26 @@ describe('option validation', () => {
       expect(() => createUpload(params)).toThrow(TypeError);
     });
 
-    test('file is not included', () => {
-      const params = buildParams({ file: undefined });
-
-      expect(() => createUpload(params)).toThrow(TypeError);
-    });
-
-    test('file is not a File', () => {
-      const params = buildParams({ file: 'neato' });
-
-      expect(() => createUpload(params)).toThrow(TypeError);
-    });
-
     test('headers are specified and not an object', () => {
       const params = buildParams({ headers: 'hey neato' });
 
       expect(() => createUpload(params)).toThrow(TypeError);
     });
 
-    test('chunkSize is not a number', () => {
-      const params = buildParams({ chunkSize: 'cool' });
+    test('maxChunkSize is not a number', () => {
+      const params = buildParams({ maxChunkSize: 'cool' });
 
       expect(() => createUpload(params)).toThrow(TypeError);
     });
 
-    test('chunkSize is a positive integer', () => {
-      const params = buildParams({ chunkSize: -256 });
+    test('maxChunkSize is a positive integer', () => {
+      const params = buildParams({ maxChunkSize: -256 });
 
       expect(() => createUpload(params)).toThrow(TypeError);
     });
 
-    test('chunkSize is not a multiple of 256', () => {
-      const params = buildParams({ chunkSize: 100 });
+    test('maxChunkSize is not a multiple of 256', () => {
+      const params = buildParams({ maxChunkSize: 100 });
 
       expect(() => createUpload(params)).toThrow(TypeError);
     });

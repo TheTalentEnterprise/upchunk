@@ -1,0 +1,22 @@
+body>.container {
+  max-width: 80rem;
+  margin-top: 5rem;
+}
+
+
+#myVideo video {
+  transform: scaleX(-1);
+}
+
+.heading {
+  text-align: center;
+}
+
+.video .video-js {
+  margin: auto;
+  width: 100%;
+}
+
+.form {
+  margin-top: 2em;
+}
